@@ -21,8 +21,8 @@ export class ReportsController {
 
   @Post()
   @HttpCode(202) // Use 202 Accepted to indicate async processing
-  generate() {
-    this.reportsService.generateAll();
+  async generate() {
+    await this.reportsService.generateAll();
     return { message: 'Report generation started in background' };
   }
 }

@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import fs from 'fs';
+import { readdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'path';
 import { performance } from 'perf_hooks';
 
@@ -7,7 +7,7 @@ import { performance } from 'perf_hooks';
 export class ReportsService {
   private readonly logger = new Logger(ReportsService.name);
 
-  private states = {
+  private readonly states = {
     accounts: 'idle',
     yearly: 'idle',
     fs: 'idle',
@@ -39,9 +39,9 @@ export class ReportsService {
   }
 
   generateAll() {
-    this.runAsync(() => this.accounts(), 'accounts');
-    this.runAsync(() => this.yearly(), 'yearly');
-    this.runAsync(() => this.fs(), 'fs');
+    void Promise.resolve().then(() => this.accounts());
+    void Promise.resolve().then(() => this.yearly());
+    void Promise.resolve().then(() => this.fs());
   }
 
   getMetrics() {
@@ -67,32 +67,12 @@ export class ReportsService {
     };
   }
 
-  private runAsync(fn: () => void, scope: keyof ReportsService['states']) {
-    setTimeout(() => {
-      try {
-        fn();
-      } catch (err) {
-        this.states[scope] = 'failed';
-        if (err instanceof Error) {
-          this.logger.error(
-            `Failed to generate '${scope}' report: ${err.message}`,
-            err.stack,
-          );
-        } else {
-          this.logger.error(
-            `Unknown error generating '${scope}' report: ${JSON.stringify(err)}`,
-          );
-        }
-      }
-    }, 0);
-  }
-
-  accounts() {
+  async accounts() {
     try {
       this.states.accounts = 'starting';
       const start = performance.now();
-      const accountBalances = this.calculateAccountBalances('tmp');
-      this.writeAccountsReport('out/accounts.csv', accountBalances);
+      const accountBalances = await this.calculateAccountBalances('tmp');
+      await this.writeAccountsReport('out/accounts.csv', accountBalances);
 
       const duration = performance.now() - start;
       this.metrics.accounts.lastDuration = duration;
@@ -110,25 +90,26 @@ export class ReportsService {
     }
   }
 
-  private calculateAccountBalances(tmpDir: string): Record<string, number> {
+  private async calculateAccountBalances(
+    tmpDir: string,
+  ): Promise<Record<string, number>> {
     const accountBalances: Record<string, number> = {};
-    fs.readdirSync(tmpDir).forEach((file) => {
+    const files = await readdir(tmpDir);
+    for (const file of files) {
       if (file.endsWith('.csv')) {
-        const lines = this.readCsvLines(path.join(tmpDir, file));
+        const lines = await this.readCsvLines(path.join(tmpDir, file));
         for (const line of lines) {
           const [, account, , debit, credit] = line.split(',');
-          if (!accountBalances[account]) {
-            accountBalances[account] = 0;
-          }
+          if (!accountBalances[account]) accountBalances[account] = 0;
           accountBalances[account] +=
             parseFloat(debit || '0') - parseFloat(credit || '0');
         }
       }
-    });
+    }
     return accountBalances;
   }
 
-  private writeAccountsReport(
+  private async writeAccountsReport(
     outputFile: string,
     accountBalances: Record<string, number>,
   ) {
@@ -136,19 +117,20 @@ export class ReportsService {
     for (const [account, balance] of Object.entries(accountBalances)) {
       output.push(`${account},${balance.toFixed(2)}`);
     }
-    fs.writeFileSync(outputFile, output.join('\n'));
+    await writeFile(outputFile, output.join('\n'));
   }
 
-  private readCsvLines(filepath: string): string[] {
-    return fs.readFileSync(filepath, 'utf-8').trim().split('\n');
+  private async readCsvLines(filepath: string): Promise<string[]> {
+    const content = await readFile(filepath, 'utf-8');
+    return content.trim().split('\n');
   }
 
-  yearly() {
+  async yearly() {
     try {
       this.states.yearly = 'starting';
       const start = performance.now();
-      const cashByYear = this.calculateYearlyCash('tmp');
-      this.writeYearlyReport('out/yearly.csv', cashByYear);
+      const cashByYear = await this.calculateYearlyCash('tmp');
+      await this.writeYearlyReport('out/yearly.csv', cashByYear);
 
       const duration = performance.now() - start;
       this.metrics.yearly.lastDuration = duration;
@@ -166,28 +148,29 @@ export class ReportsService {
     }
   }
 
-  private calculateYearlyCash(tmpDir: string): Record<string, number> {
+  private async calculateYearlyCash(
+    tmpDir: string,
+  ): Promise<Record<string, number>> {
     const cashByYear: Record<string, number> = {};
-    fs.readdirSync(tmpDir).forEach((file) => {
+    const files = await readdir(tmpDir);
+    for (const file of files) {
       if (file.endsWith('.csv') && file !== 'yearly.csv') {
-        const lines = this.readCsvLines(path.join(tmpDir, file));
+        const lines = await this.readCsvLines(path.join(tmpDir, file));
         for (const line of lines) {
           const [date, account, , debit, credit] = line.split(',');
           if (account === 'Cash') {
             const year = new Date(date).getFullYear();
-            if (!cashByYear[year]) {
-              cashByYear[year] = 0;
-            }
+            if (!cashByYear[year]) cashByYear[year] = 0;
             cashByYear[year] +=
               parseFloat(debit || '0') - parseFloat(credit || '0');
           }
         }
       }
-    });
+    }
     return cashByYear;
   }
 
-  private writeYearlyReport(
+  private async writeYearlyReport(
     outputFile: string,
     cashByYear: Record<string, number>,
   ) {
@@ -197,15 +180,15 @@ export class ReportsService {
       .forEach((year) => {
         output.push(`${year},${cashByYear[year].toFixed(2)}`);
       });
-    fs.writeFileSync(outputFile, output.join('\n'));
+    await writeFile(outputFile, output.join('\n'));
   }
 
-  fs() {
+  async fs() {
     try {
       this.states.fs = 'starting';
       const start = performance.now();
-      const balances = this.calculateFsBalances('tmp');
-      this.writeFsReport('out/fs.csv', balances);
+      const balances = await this.calculateFsBalances('tmp');
+      await this.writeFsReport('out/fs.csv', balances);
 
       const duration = performance.now() - start;
       this.metrics.fs.lastDuration = duration;
@@ -223,7 +206,9 @@ export class ReportsService {
     }
   }
 
-  private calculateFsBalances(tmpDir: string): Record<string, number> {
+  private async calculateFsBalances(
+    tmpDir: string,
+  ): Promise<Record<string, number>> {
     const categories = this.getFsCategories();
     const balances: Record<string, number> = {};
     for (const section of Object.values(categories)) {
@@ -233,9 +218,10 @@ export class ReportsService {
         }
       }
     }
-    fs.readdirSync(tmpDir).forEach((file) => {
+    const files = await readdir(tmpDir);
+    for (const file of files) {
       if (file.endsWith('.csv') && file !== 'fs.csv') {
-        const lines = this.readCsvLines(path.join(tmpDir, file));
+        const lines = await this.readCsvLines(path.join(tmpDir, file));
         for (const line of lines) {
           const [, account, , debit, credit] = line.split(',');
           if (balances.hasOwnProperty(account)) {
@@ -244,11 +230,14 @@ export class ReportsService {
           }
         }
       }
-    });
+    }
     return balances;
   }
 
-  private writeFsReport(outputFile: string, balances: Record<string, number>) {
+  private async writeFsReport(
+    outputFile: string,
+    balances: Record<string, number>,
+  ) {
     const categories = this.getFsCategories();
     const output: string[] = [];
     output.push('Basic Financial Statement');
@@ -303,7 +292,7 @@ export class ReportsService {
     output.push(
       `Assets = Liabilities + Equity, ${totalAssets.toFixed(2)} = ${(totalLiabilities + totalEquity).toFixed(2)}`,
     );
-    fs.writeFileSync(outputFile, output.join('\n'));
+    await writeFile(outputFile, output.join('\n'));
   }
 
   private getFsCategories() {

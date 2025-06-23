@@ -13,7 +13,7 @@ import { TicketsService } from './tickets.service';
 import { TicketAssigneeResolver } from './helpers/ticket-assignee-resolver';
 import { Op } from 'sequelize';
 
-describe('TicketsController (integration)', () => {
+describe('TicketsController', () => {
   let controller: TicketsController;
 
   beforeEach(async () => {
