@@ -16,7 +16,7 @@ import { Op } from 'sequelize';
 describe('TicketsController (integration)', () => {
   let controller: TicketsController;
 
-  beforeAll(async () => {
+  beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [TicketsController],
       providers: [TicketsService, TicketAssigneeResolver],

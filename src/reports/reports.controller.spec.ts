@@ -8,7 +8,7 @@ describe('ReportsController', () => {
   let app: INestApplication;
   let reportsService: ReportsService;
 
-  beforeAll(async () => {
+  beforeEach(async () => {
     const serviceMock = {
       state: jest.fn((scope: string) => `${scope}-state`),
       getMetrics: jest.fn().mockReturnValue({
