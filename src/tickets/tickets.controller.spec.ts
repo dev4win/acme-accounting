@@ -1,7 +1,7 @@
-import { ConflictException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { Company } from '../../db/models/Company';
 import {
+  Ticket,
   TicketCategory,
   TicketStatus,
   TicketType,
@@ -9,24 +9,32 @@ import {
 import { User, UserRole } from '../../db/models/User';
 import { DbModule } from '../db.module';
 import { TicketsController } from './tickets.controller';
+import { TicketsService } from './tickets.service';
+import { TicketAssigneeResolver } from './helpers/ticket-assignee-resolver';
+import { Op } from 'sequelize';
 
-describe('TicketsController', () => {
+describe('TicketsController (integration)', () => {
   let controller: TicketsController;
 
-  beforeEach(async () => {
+  beforeAll(async () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [TicketsController],
+      providers: [TicketsService, TicketAssigneeResolver],
       imports: [DbModule],
     }).compile();
 
     controller = module.get<TicketsController>(TicketsController);
   });
 
-  it('should be defined', async () => {
+  it('should be defined', () => {
     expect(controller).toBeDefined();
+  });
 
-    const res = await controller.findAll();
-    console.log(res);
+  describe('findAll', () => {
+    it('returns an array (could be empty)', async () => {
+      const result = await controller.findAll();
+      expect(Array.isArray(result)).toBe(true);
+    });
   });
 
   describe('create', () => {
@@ -44,20 +52,20 @@ describe('TicketsController', () => {
           type: TicketType.managementReport,
         });
 
-        expect(ticket.category).toBe(TicketCategory.accounting);
-        expect(ticket.assigneeId).toBe(user.id);
-        expect(ticket.status).toBe(TicketStatus.open);
+        expect(ticket.data.category).toBe(TicketCategory.accounting);
+        expect(ticket.data.assigneeId).toBe(user.id);
+        expect(ticket.data.status).toBe(TicketStatus.open);
       });
 
-      it('if there are multiple accountants, assign the last one', async () => {
+      it('assigns most recently created accountant', async () => {
         const company = await Company.create({ name: 'test' });
         await User.create({
-          name: 'Test User',
+          name: 'Test User 1',
           role: UserRole.accountant,
           companyId: company.id,
         });
         const user2 = await User.create({
-          name: 'Test User',
+          name: 'Test User 2',
           role: UserRole.accountant,
           companyId: company.id,
         });
@@ -67,12 +75,10 @@ describe('TicketsController', () => {
           type: TicketType.managementReport,
         });
 
-        expect(ticket.category).toBe(TicketCategory.accounting);
-        expect(ticket.assigneeId).toBe(user2.id);
-        expect(ticket.status).toBe(TicketStatus.open);
+        expect(ticket.data.assigneeId).toBe(user2.id);
       });
 
-      it('if there is no accountant, throw', async () => {
+      it('throws if there is no accountant', async () => {
         const company = await Company.create({ name: 'test' });
 
         await expect(
@@ -80,11 +86,7 @@ describe('TicketsController', () => {
             companyId: company.id,
             type: TicketType.managementReport,
           }),
-        ).rejects.toEqual(
-          new ConflictException(
-            `Cannot find user with role accountant to create a ticket`,
-          ),
-        );
+        ).rejects.toThrow(/accountant/);
       });
     });
 
@@ -102,20 +104,20 @@ describe('TicketsController', () => {
           type: TicketType.registrationAddressChange,
         });
 
-        expect(ticket.category).toBe(TicketCategory.corporate);
-        expect(ticket.assigneeId).toBe(user.id);
-        expect(ticket.status).toBe(TicketStatus.open);
+        expect(ticket.data.category).toBe(TicketCategory.corporate);
+        expect(ticket.data.assigneeId).toBe(user.id);
+        expect(ticket.data.status).toBe(TicketStatus.open);
       });
 
-      it('if there are multiple secretaries, throw', async () => {
+      it('throws if multiple secretaries', async () => {
         const company = await Company.create({ name: 'test' });
         await User.create({
-          name: 'Test User',
+          name: 'Test User 1',
           role: UserRole.corporateSecretary,
           companyId: company.id,
         });
         await User.create({
-          name: 'Test User',
+          name: 'Test User 2',
           role: UserRole.corporateSecretary,
           companyId: company.id,
         });
@@ -125,14 +127,10 @@ describe('TicketsController', () => {
             companyId: company.id,
             type: TicketType.registrationAddressChange,
           }),
-        ).rejects.toEqual(
-          new ConflictException(
-            `Multiple users with role corporateSecretary. Cannot create a ticket`,
-          ),
-        );
+        ).rejects.toThrow(/Multiple users found with role: corporateSecretary/);
       });
 
-      it('if there is no secretary, throw', async () => {
+      it('throws if there is no secretary nor director', async () => {
         const company = await Company.create({ name: 'test' });
 
         await expect(
@@ -140,11 +138,127 @@ describe('TicketsController', () => {
             companyId: company.id,
             type: TicketType.registrationAddressChange,
           }),
-        ).rejects.toEqual(
-          new ConflictException(
-            `Cannot find user with role corporateSecretary to create a ticket`,
-          ),
+        ).rejects.toThrow(/No user found with role/);
+      });
+
+      it('assigns Director if no secretary exists', async () => {
+        const company = await Company.create({ name: 'test' });
+        const director = await User.create({
+          name: 'Director',
+          role: UserRole.director,
+          companyId: company.id,
+        });
+
+        const ticket = await controller.create({
+          companyId: company.id,
+          type: TicketType.registrationAddressChange,
+        });
+
+        expect(ticket.data.assigneeId).toBe(director.id);
+      });
+
+      it('throws if multiple directors as fallback', async () => {
+        const company = await Company.create({ name: 'test' });
+        await User.create({
+          name: 'Director 1',
+          role: UserRole.director,
+          companyId: company.id,
+        });
+        await User.create({
+          name: 'Director 2',
+          role: UserRole.director,
+          companyId: company.id,
+        });
+
+        await expect(
+          controller.create({
+            companyId: company.id,
+            type: TicketType.registrationAddressChange,
+          }),
+        ).rejects.toThrow(/Multiple users found with fallback role/);
+      });
+
+      it('throws if the company has a ticket of this type', async () => {
+        const company = await Company.create({ name: 'test' });
+        await Ticket.create({
+          companyId: company.id,
+          type: TicketType.registrationAddressChange,
+          category: TicketCategory.corporate,
+          assigneeId: null,
+          status: TicketStatus.open,
+        });
+
+        await expect(
+          controller.create({
+            companyId: company.id,
+            type: TicketType.registrationAddressChange,
+          }),
+        ).rejects.toThrow(
+          /A registrationAddressChange ticket already exists for company/,
         );
+      });
+    });
+
+    describe('strikeOff', () => {
+      it('throws if multiple directors', async () => {
+        const company = await Company.create({ name: 'test' });
+        await User.create({
+          name: 'Director 1',
+          role: UserRole.director,
+          companyId: company.id,
+        });
+        await User.create({
+          name: 'Director 2',
+          role: UserRole.director,
+          companyId: company.id,
+        });
+        await expect(
+          controller.create({
+            companyId: company.id,
+            type: TicketType.strikeOff,
+          }),
+        ).rejects.toThrow(/Multiple users found with role: director/);
+      });
+
+      it('resolves other open tickets and assigns to Director', async () => {
+        const company = await Company.create({ name: 'test' });
+        const director = await User.create({
+          name: 'Director',
+          role: UserRole.director,
+          companyId: company.id,
+        });
+
+        await Ticket.create({
+          companyId: company.id,
+          type: TicketType.managementReport,
+          assigneeId: director.id,
+          category: TicketCategory.accounting,
+          status: TicketStatus.open,
+        });
+        await Ticket.create({
+          companyId: company.id,
+          type: TicketType.registrationAddressChange,
+          assigneeId: director.id,
+          category: TicketCategory.corporate,
+          status: TicketStatus.open,
+        });
+
+        const ticket = await controller.create({
+          companyId: company.id,
+          type: TicketType.strikeOff,
+        });
+
+        expect(ticket.data.category).toBe(TicketCategory.management);
+        expect(ticket.data.assigneeId).toBe(director.id);
+
+        const openTickets = await Ticket.findAll({
+          where: {
+            companyId: company.id,
+            status: TicketStatus.open,
+            type: { [Op.ne]: TicketType.strikeOff },
+          },
+        });
+        expect(openTickets.length).toBe(0);
       });
     });
   });

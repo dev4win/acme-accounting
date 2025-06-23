@@ -3,7 +3,7 @@ import { ReportsService } from './reports.service';
 
 @Controller('api/v1/reports')
 export class ReportsController {
-  constructor(private reportsService: ReportsService) {}
+  constructor(private readonly reportsService: ReportsService) {}
 
   @Get()
   report() {
@@ -14,12 +14,15 @@ export class ReportsController {
     };
   }
 
+  @Get('metrics')
+  metrics() {
+    return this.reportsService.getMetrics();
+  }
+
   @Post()
-  @HttpCode(201)
+  @HttpCode(202) // Use 202 Accepted to indicate async processing
   generate() {
-    this.reportsService.accounts();
-    this.reportsService.yearly();
-    this.reportsService.fs();
-    return { message: 'finished' };
+    this.reportsService.generateAll();
+    return { message: 'Report generation started in background' };
   }
 }

@@ -24,6 +24,7 @@ export async function cleanTables() {
   async function cleanTable<T extends Model>(model: ModelCtor<T>) {
     const options: DestroyOptions = {
       where: {},
+      restartIdentity: true,
     };
     try {
       await model.unscoped().destroy(options);
